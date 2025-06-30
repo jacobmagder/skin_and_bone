@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Story‑Writer Ultra</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Sacramento&family=Dancing+Script&family=Great+Vibes&family=Alex+Brush&display=swap" rel="stylesheet">
+<style>
+:root{
+  --line-bg:url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width=12 height=32%3E%3Crect width=12 height=1 fill=%23d9d9d9/%3E%3C/svg%3E');
+  --grid-bg:url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width=32 height=32%3E%3Cpath d="M0 0h32v32H0z" fill="none" stroke="%23e0e0e0"/%3E%3C/svg%3E');
+}
+.bg-paper        {background:#fdfbf7 var(--line-bg);background-size:100% 32px;}
+.bg-paper.grid   {background-image:var(--grid-bg);}
+.bg-paper.blank  {background-image:none;}
+.bg-paper.parch  {background-image:url('https://i.imgur.com/3cP9wXW.jpg');background-size:cover;}
+canvas{background:transparent;}
+/* keeps toolbar above content */
+body{overflow:hidden;}
+</style>
+</head>
+<body class="bg-neutral-900 text-neutral-100">
+
+<!-- TOOLBAR -->
+<div id="bar" class="fixed top-0 left-0 right-0 z-20 bg-neutral-800/80 backdrop-blur flex flex-wrap gap-2 items-center p-2 text-sm">
+  <textarea id="src" rows="2" placeholder="Write or paste text…" class="flex-1 min-w-[12rem] p-2 bg-neutral-700/40 rounded resize-y"></textarea>
+
+  <select id="font" class="bg-neutral-700/40 p-1 rounded">
+    <option>Sacramento</option><option>Dancing Script</option><option>Great Vibes</option><option>Alex Brush</option>
+  </select>
+  <input id="ink" type="color" value="#222222" class="h-8 w-8 border rounded">
+
+  <label class="flex items-center gap-1">Align
+    <select id="align" class="bg-neutral-700/40 p-1 rounded">
+      <option value="left">Left</option><option value="center">Center</option><option value="right">Right</option>
+    </select>
+  </label>
+
+  <label class="flex items-center gap-1">Paper
+    <select id="paper" class="bg-neutral-700/40 p-1 rounded">
+      <option value="bg-paper">Lined</option>
+      <option value="bg-paper grid">Grid</option>
+      <option value="bg-paper blank">Blank</option>
+      <option value="bg-paper parch">Parchment</option>
+      <option value="custom">Custom…</option>
+    </select>
+  </label>
+  <label class="flex items-center gap-1"><input id="chkLines" type="checkbox" checked> Lines</label>
+  <input id="bgFile" type="file" accept="image/*" class="hidden">
+  <label class="flex items-center gap-1">Stretch<input id="stretch" type="checkbox"></label>
+
+  <label class="flex items-center gap-1"><input id="fade" type="checkbox" checked> Fading</label>
+  <label class="flex items-center gap-1"><input id="blot" type="checkbox" checked> Blotches</label>
+  <label class="flex items-center gap-1"><input id="splash" type="checkbox" checked> Splashes</label>
+
+  <label class="flex items-center gap-1">Speed
+    <input id="speed" type="range" min="20" max="300" value="120" class="accent-blue-500">
+    <span id="spdVal">120</span>
+  </label>
+
+  <button id="play"  class="px-3 py-1 bg-blue-600/90 rounded">Play</button>
+  <button id="pause" class="px-3 py-1 bg-neutral-700/80 rounded hidden">Pause</button>
+  <button id="save"  class="px-3 py-1 bg-neutral-700/80 rounded hidden">Save</button>
+  <button id="fs"    class="ml-auto px-2 text-lg">&#x26F6;</button>
+</div>
+
+<!-- CANVAS WRAP -->
+<div id="wrap" class="bg-paper fixed inset-0 pt-[96px] overflow-auto">
+  <canvas id="cvs"></canvas>
+</div>
+
+<!-- SAVE‑LIST MODAL -->
+<div id="modal" class="fixed inset-0 hidden items-center justify-center bg-black/60 z-30">
+  <div class="bg-neutral-800 p-4 rounded w-96 max-h-[80vh] overflow-auto space-y-2">
+    <div class="flex justify-between items-center mb-1">
+      <h2 class="text-lg">Saved positions</h2>
+      <button id="close">&times;</button>
+    </div>
+    <input id="search" placeholder="Search…" class="w-full p-1 bg-neutral-700/40 rounded mb-2">
+    <ul id="list" class="space-y-1"></ul>
+  </div>
+</div>
+
+<script>
+/* ─── DOM refs ─────────────────────────────────────────────────────────── */
+const cvs  = document.getElementById('cvs'), ctx = cvs.getContext('2d');
+const wrap = document.getElementById('wrap');
+const src  = document.getElementById('src');
+const font = document.getElementById('font');
+const ink  = document.getElementById('ink');
+const align= document.getElementById('align');
+const paper= document.getElementById('paper');
+const chkLines=document.getElementById('chkLines');
+const bgFile=document.getElementById('bgFile');
+const stretch=document.getElementById('stretch');
+const fade = document.getElementById('fade');
+const blot = document.getElementById('blot');
+const splash=document.getElementById('splash');
+const spd  = document.getElementById('speed'), spdVal=document.getElementById('spdVal');
+const play = document.getElementById('play'), pause=document.getElementById('pause'), save=document.getElementById('save');
+const fsBtn=document.getElementById('fs');
+const modal=document.getElementById('modal'), list=document.getElementById('list'), search=document.getElementById('search');
+
+/* ─── state ─────────────────────────────────────────────────────────────── */
+let idx=0, timer=null, cps=+spd.value, customURL='';
+const margin=40, indent=margin*1.5, lineH=42;
+
+/* ─── helpers ───────────────────────────────────────────────────────────── */
+function fitCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  if (cvs.width  !== w*dpr) cvs.width  = w*dpr;
+  if (cvs.height !== h*dpr) cvs.height = h*dpr;
+  cvs.style.width  = w + 'px';
+  cvs.style.height = h + 'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  redraw();
+}
+window.addEventListener('resize',fitCanvas);
+
+/* text wrapping & drawing with paragraph indent and alignment */
+function buildLines(txt) {
+  const words = txt.replace(/\r/g,'').split(/\s+/);
+  const lines = []; let line='', paraStart=true;
+  words.forEach((w,i)=>{
+    if(w==='' && i!==words.length-1) { // blank → new paragraph
+      lines.push({text:line.trim(),para:false});
+      lines.push({text:'',para:true});
+      line=''; paraStart=true; return;
+    }
+    const test = (line+' '+w).trim();
+    ctx.font=`32px '${font.value}'`;
+    const maxWidth = cvs.width/window.devicePixelRatio - margin*2;
+    if(ctx.measureText(test).width > maxWidth){
+      lines.push({text:line.trim(),para:paraStart});
+      line=w; paraStart=false;
+    }else{
+      line=test; if(paraStart) paraStart=line==='';
+    }
+  });
+  if(line) lines.push({text:line.trim(),para:paraStart});
+  return lines;
+}
+function drawText(txt){
+  ctx.clearRect(0,0,cvs.width,cvs.height);
+  ctx.textBaseline='top';
+  ctx.font=`32px '${font.value}'`;
+  ctx.fillStyle=ink.value;
+  ctx.textAlign=align.value;
+  const lines = buildLines(txt);
+  const startX = align.value==='center'?cvs.width/window.devicePixelRatio/2 :
+                 align.value==='right'?cvs.width/window.devicePixelRatio - margin : margin;
+  let y = 0;
+  for(const l of lines){
+    const x = l.para?startX + (align.value==='left'?indent-margin:0):startX;
+    if(fade.checked) ctx.globalAlpha = 0.6 + Math.random()*0.4;
+    ctx.fillText(l.text,x,y);
+    if(blot.checked && Math.random()<0.05){
+      ctx.beginPath();
+      ctx.arc(x + Math.random()*200, y-10, Math.random()*4+2,0,Math.PI*2);
+      ctx.fill();
+    }
+    if(splash.checked && Math.random()<0.25){
+      ctx.beginPath();
+      ctx.arc(Math.random()*cvs.width/window.devicePixelRatio, y+32, Math.random()*5,0,Math.PI*2);
+      ctx.fill();
+    }
+    y+=lineH;
+  }
+  ctx.globalAlpha=1;
+}
+
+function redraw(){ drawText(src.value.slice(0,idx)); }
+
+/* ─── play / typewriter ─────────────────────────────────────────────────── */
+function step(){ if(idx>=src.value.length){stop();return;} idx++; redraw(); }
+function run(){
+  timer=setInterval(step,1000/cps);
+  play.classList.add('hidden'); pause.classList.remove('hidden'); save.classList.remove('hidden');
+}
+function stop(){ clearInterval(timer); timer=null; play.classList.remove('hidden'); pause.classList.add('hidden'); }
+
+/* ─── events ────────────────────────────────────────────────────────────── */
+play.onclick=()=>{ if(!src.value.trim()) return alert('Nothing to play.'); run(); };
+pause.onclick=stop;
+spd.oninput=()=>{ cps=+spd.value; spdVal.textContent=cps; if(timer){stop();run();} };
+font.onchange=redraw; ink.oninput=redraw; align.onchange=redraw;
+[src,fade,blot,splash].forEach(el=>el.addEventListener('input',()=>{idx=0; redraw();}));
+
+/* paper themes + custom background */
+paper.onchange=()=>{
+  if(paper.value==='custom'){ bgFile.click(); return; }
+  customURL=''; wrap.className=paper.value+' fixed inset-0 pt-[96px] overflow-auto';
+  if(!chkLines.checked) wrap.style.backgroundImage='none';
+  else wrap.style.backgroundImage='';
+};
+chkLines.oninput=()=>{ if(!chkLines.checked) wrap.style.backgroundImage='none'; else if(!customURL) paper.onchange(); };
+bgFile.onchange=e=>{
+  const f=e.target.files[0]; if(!f) return;
+  customURL=URL.createObjectURL(f);
+  wrap.className='fixed inset-0 pt-[96px] overflow-auto';
+  wrap.style.background=stretch.checked?`url(${customURL}) center/cover no-repeat`:`url(${customURL}) repeat`;
+};
+stretch.oninput=()=>{ if(customURL) wrap.style.background=stretch.checked?`url(${customURL}) center/cover no-repeat`:`url(${customURL}) repeat`; };
+
+/* save‑states */
+function saveState(){ localStorage.setItem('swp-'+Date.now(),JSON.stringify({t:Date.now(),i:idx,txt:src.value})); alert('Saved.'); }
+save.onclick=saveState;
+save.addEventListener('contextmenu',e=>{
+  e.preventDefault(); list.innerHTML='';
+  Object.keys(localStorage).filter(k=>k.startsWith('swp-')).sort((a,b)=>b.localeCompare(a)).forEach(k=>{
+    const s=JSON.parse(localStorage.getItem(k));
+    const li=document.createElement('li');
+    li.className='p-1 bg-neutral-700/40 rounded cursor-pointer';
+    li.textContent=new Date(s.t).toLocaleString()+' — '+s.txt.slice(0,40).replace(/\n/g,' ');
+    li.onclick=()=>{ src.value=s.txt; idx=s.i; modal.classList.add('hidden'); redraw(); };
+    list.append(li);
+  });
+  modal.classList.remove('hidden');
+});
+document.getElementById('close').onclick=()=>modal.classList.add('hidden');
+modal.onclick=e=>{ if(e.target===modal) modal.classList.add('hidden'); };
+search.oninput=()=>[...list.children].forEach(li=>li.style.display=li.textContent.toLowerCase().includes(search.value.toLowerCase())?'block':'none');
+
+/* fullscreen */
+fsBtn.onclick=()=>{ const el=document.documentElement; (document.fullscreenElement?document.exitFullscreen:el.requestFullscreen).call(el); };
+
+/* init */
+window.onload=()=>{ fitCanvas(); redraw(); };
+</script>
+</body>
+</html>
